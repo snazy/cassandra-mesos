@@ -11,14 +11,14 @@ We will be using [Elastic Mesos](https://elastic.mesosphere.io/) as an easy way 
 
 Cassandra is a highly scalable NoSQL database which is well suited to run on Mesos due to its peer-to-peer architecture. It posesses some great features to back today's web applications with its horizontal scalability, no single point of failure and a simple query language (CQL). 
 
-Mesos is a cluster manager which provides a general runtime environment providing all the essentials to deploy, run and manage distributed applications. Its resource management and isolation helps getting the most out of your servers, freeing you from the "one server on app" paradigm.
+Mesos is a cluster manager which provides a general runtime environment providing all the essentials to deploy, run and manage distributed applications. Its resource management and isolation helps getting the most out of your servers, freeing you from the "one app per server" paradigm.
 
 
 ## Howto
 
-Deploying a Cassandra cluster typically involves downloading the Cassandra distribution, changing configuration settings like seed nodes and starting the servers up. This in itself doesn't sound too involved for a couple of servers, but gets pretty involved when tens of servers are involved. 
+Deploying a Cassandra cluster typically involves downloading the Cassandra distribution, changing configuration settings like seed nodes and starting the servers up. This in itself doesn't sound too involved for a couple of servers, but gets pretty involved when you're running on dozens of servers or more. 
 
-Of course this could be automated with Puppet or Chef, but by running Cassandra on Mesos all the deployment and configuration will be handled from a central location rendering deployment tools unnecessary.
+Of course this could be automated with a tool like Puppet or Chef, but by running Cassandra on Mesos all the deployment and configuration will be handled from a central location rendering deployment tools unnecessary.
 
 Let's install Cassandra on Mesos so you can see for yourself:
 
@@ -46,7 +46,7 @@ Let's install Cassandra on Mesos so you can see for yourself:
 1. Start Cassandra on Mesos   
    ```bin/cassandra-mesos```
    
-The scheduler (aka the ```bin/cassandra-mesos``` process) automatically deploys Cassandra to suitable Mesos nodes observing the set resource limits on CPU, memory and disk space. Each task will then request the node confguration from the scheduler before starting up. This ensure all nodes are configured exactly the same.
+The scheduler (aka the ```bin/cassandra-mesos``` process) automatically deploys Cassandra to suitable Mesos nodes observing the set resource limits on CPU, memory and disk space. Each task will then request the node confguration from the scheduler before starting up. This ensures that all nodes are configured exactly the same.
 
 The Mesos UI (http://[mesos master URL]:5050/) will show your running Cassandra tasks:
 
@@ -119,5 +119,8 @@ ubuntu@ec2-23-23-54-129:~/cassandra-mesos-2.0.5-1$
 # Conclusion
 [TO BE DONE]
 
+# Outlook
+
+autoscaling, etc.
 
 
