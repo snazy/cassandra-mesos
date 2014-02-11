@@ -6,6 +6,8 @@
 In this post we'll show you how deploying Cassandra on Mesos can simplify your life running a Cassandra cluster. We will introduce you to Cassandra and Mesos fundamentals and conclude with running some queries and scaling up our Cassandra cluster.
 
 We will be using [Elastic Mesos](https://elastic.mesosphere.io/) as an easy way to access a Mesos cluster, but the exercises will also work on a [local single node cluster](https://github.com/mesosphere/playa-mesos) (with the exception of the scaling excercise).
+
+**Disclaimer:** Please be advised that Cassandra on Mesos is a fairly new port. It is reasonably well tested, but like any new technology you should put it through its paces and test it for yourself. If you have any feature requests or patches feel free to submit [an issue](https://github.com/mesosphere/cassandra-mesos/issues) or [pull request](https://github.com/mesosphere/cassandra-mesos/pulls). 
  
 ## Why Cassandra & Mesos
 
@@ -127,12 +129,24 @@ UN  10.43.144.109  40.85 KB   256     66.8%             cd95a45a-607d-485c-b67c-
 ubuntu@ec2-23-23-54-129:~/cassandra-mesos-2.0.5-1$
 ``` 
 
+# Outlook
+There are several features which we are thinking about that we haven't tackled yet:
+
+1. Autoscaling  
+Wouldn't it be awesome if Cassandra would automatically sping up more instances when your application gets featured on Hacker News? If you have a need for this we'd love to talk to you and find out the specifics.
+
+1. Stats  
+Cassandra has a nice JMX API to retrieve runtime statistics about each node, the workload and cluster. It would be nice to surface these automatically in Mesos.
+
+1. Online Cassandra upgrades  
+The current version of the Cassandra on Mesos scheduler requires a Cassandra shutdown to upgrade the Cassandra cluster (unless one is willing to copy the data into a new upgraded Cassandra cluster manually). A future version could automate the upgrade process.
+
+
 
 # Conclusion
-[TO BE DONE]
+We have shown you how easy it is to run a distributed Cassandra cluster on Mesos. Mesos takes care of most of the annoying steps involved and largely elimiates the need for complicated deployment tools. It makes sacaing 
 
-# Outlook
+If you have any feedback or would like to contribute patches feel free to email <erich@mesosphere.io>. 
 
-autoscaling, etc.
 
 
