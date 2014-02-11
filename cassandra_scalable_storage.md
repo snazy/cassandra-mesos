@@ -24,29 +24,41 @@ Let's install Cassandra on Mesos so you can see for yourself:
 
 
 1. Login to your Mesos master:   
-   ```ssh ubuntu@[my mesos master host]```  
+```
+ssh ubuntu@[my mesos master host]
+```  
 
 1. Download the Cassandra on Mesos distribution:   
-   ```wget http://downloads.mesosphere.io/cassandra/cassandra-mesos-2.0.5-1.tgz```
+```
+wget http://downloads.mesosphere.io/cassandra/cassandra-mesos-2.0.5-1.tgz
+```
 
 1. Unpack the distribution and change into it:   
-   ```tar xvzf cassandra-mesos*tgz && cd cassandra-mesos*``` 
+```
+tar xvzf cassandra-mesos*tgz && cd cassandra-mesos*
+``` 
 
-1. Change the Mesos master URL and Zookeeper server list in ```conf/mesos.yaml``` to match your cluster:   
-   ```mesos.master.url: 'zk://localhost:2181/mesos'```   
-   ```state.zk: 'localhost:2181'```   
+1. Change the Mesos master URL and Zookeeper server list in `conf/mesos.yaml` to match your cluster:   
+```
+mesos.master.url: 'zk://localhost:2181/mesos'   
+state.zk: 'localhost:2181'
+```   
    
    **Note:** If you run a local cluster you can leave all defaults.
 
 1. Change the number of hardware nodes you want Cassandra to be deployed:  
-   ```cassandra.noOfHwNodes: 1```   
+```
+cassandra.noOfHwNodes: 1
+```   
    
    **Note:** If you want to try out the scaling feature don't deploy it to all your Mesos nodes initially.
 
 1. Start Cassandra on Mesos   
-   ```bin/cassandra-mesos```
+```
+bin/cassandra-mesos
+```
    
-The scheduler (aka the ```bin/cassandra-mesos``` process) automatically deploys Cassandra to suitable Mesos nodes observing the set resource limits on CPU, memory and disk space. Each task will then request the node confguration from the scheduler before starting up. This ensures that all nodes are configured exactly the same.
+The scheduler (aka the `bin/cassandra-mesos` process) automatically deploys Cassandra to suitable Mesos nodes observing the set resource limits on CPU, memory and disk space. Each task will then request the node confguration from the scheduler before starting up. This ensures that all nodes are configured exactly the same.
 
 The Mesos UI (http://[mesos master URL]:5050/) will show your running Cassandra tasks:
 
@@ -56,17 +68,17 @@ The Mesos UI (http://[mesos master URL]:5050/) will show your running Cassandra 
 ## Running Queries
 Cassandra supports a simplified SQL-like query language called CQL (Cassandra Query Language). It was built with modern web application workloads in mind and provides facilities to support many of the usual use cases through distributed counters and native collection data types.
 
-Running CQL is done through the CQL shell ``cqlsh``:
+Running CQL is done through the CQL shell `cqlsh`:
 
 1. Go to the Mesos UI and copy down any host running Cassandra.   
    You can find it by clicking on the Cassandra framework. The hostname is displayed in the last column of the active task list.
 
 1. Go to the mesos master shell and start the CQL shell:   
-   ```cd ~/cassandra-mesos* &&  bin/cqlsh [cassandra host]```
+```
+cd ~/cassandra-mesos* &&  bin/cqlsh [cassandra host]
+```
   
 1. Execute a CQL command:  
-   ```select * from system.schema_keyspaces;```
-
 ```
 cqlsh> select * from system.schema_keyspaces ;
 
@@ -88,22 +100,22 @@ A much better way to learn CQL is to follow a good introduction like [this one](
 Cassandra makes it very easy to scale your database in case your application becomes popular. Running Cassandra on Mesos makes it even easier as it takes care of all the operational aspects of scaling up your system:
 
 1. Stop the Cassandra scheduler  
-   If you are running it inside your terminal you can just ```Ctrl-C``` the process. Otherwise you can run ```kill $(pgrep -f cassandra)``` to stop the scheduler. 
+   If you are running it inside your terminal you can just `Ctrl-C` the process. Otherwise you can run `kill $(pgrep -f cassandra)` to stop the scheduler. 
    
    Please note that the Cassandra tasks will continue to run.
 
-1. Scale up your Cassandra nodes by increasing the number of ```cassandra.noOfHwNodes``` in ```conf/mesos.yaml```   
+1. Scale up your Cassandra nodes by increasing the number of `cassandra.noOfHwNodes` in `conf/mesos.yaml`
 
    **Please stay within the number of machines you have otherwise Mesos will appear to be hanging while it waits for more resources to come online.**
 
 1. Restart the Cassandra scheduler   
    The scheduler will automatically connect back with your existing Cassandra tasks and provision additional nodes to run Cassandra. If you loging to the Mesos UI you will see the new nodes. 
    
-You can also use the Cassandra's ``nodetool`` to check that indeed all nodes have joined the same cluster: 
-
-```cd ~/cassandra-mesos* &&  bin/nodetool --host [cassandra host] status```:
+You can also use the Cassandra's `nodetool` to check that indeed all nodes have joined the same cluster: 
 
 ```
+cd ~/cassandra-mesos* && bin/nodetool --host [cassandra host] status
+
 Datacenter: datacenter1
 =======================
 Status=Up/Down
