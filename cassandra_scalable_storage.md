@@ -1,11 +1,12 @@
 # Cassandra & Mesos -- Scalable Enterprise Storage
 
+> A guest post by Erich Nachbar, who is currently helping [Mesosphere](http://mesosphere.io/) to port his favorite open source projects to Mesos. Erich loves building large scale systems and enjoys the occasional [hardware hack](https://plus.google.com/+ErichNachbar/posts).
 
 ## Overview
 
-In this post we'll show you how deploying Cassandra on Mesos can simplify your life running a Cassandra cluster. We will introduce you to Cassandra and Mesos fundamentals and conclude with running some queries and scaling up our Cassandra cluster.
+In this post we'll show you how deploying Cassandra on Mesos can simplify your life running a Cassandra cluster. We will introduce you to Cassandra and Mesos fundamentals, run some CQL queries and scale up our Cassandra cluster.
 
-We will be using [Elastic Mesos](https://elastic.mesosphere.io/) as an easy way to access a Mesos cluster, but the exercises will also work on a [local single node cluster](https://github.com/mesosphere/playa-mesos) (with the exception of the scaling excercise).
+We will be using [Elastic Mesos](https://elastic.mesosphere.io/) as an easy way to access a Mesos cluster, but the exercises will also work on a [local single node cluster](https://github.com/mesosphere/playa-mesos) with the exception of the scaling excercise.
 
 **Disclaimer:** Please be advised that Cassandra on Mesos is a fairly new port. It is reasonably well tested, but like any new technology you should put it through its paces and test it for yourself. If you have any feature requests or patches feel free to submit [an issue](https://github.com/mesosphere/cassandra-mesos/issues) or [pull request](https://github.com/mesosphere/cassandra-mesos/pulls). 
  
@@ -95,7 +96,7 @@ cqlsh>
 ```
 **Please note that the system keyspace is not to be messed with and was just chosen as a simple example.**
 
-A much better way to learn CQL is to follow a good introduction like [this one](http://www.datastax.com/documentation/cql/3.0/webhelp/cql/ddl/ddl_intro_c.html).
+A much better way to learn CQL is to follow a [good introduction](http://www.datastax.com/documentation/cql/3.0/webhelp/cql/ddl/ddl_intro_c.html).
 
 
 ## Scaling
@@ -111,7 +112,7 @@ Cassandra makes it very easy to scale your database in case your application bec
    **Please stay within the number of machines you have otherwise Mesos will appear to be hanging while it waits for more resources to come online.**
 
 1. Restart the Cassandra scheduler   
-   The scheduler will automatically connect back with your existing Cassandra tasks and provision additional nodes to run Cassandra. If you loging to the Mesos UI you will see the new nodes. 
+   The scheduler will automatically connect back with your existing Cassandra tasks and provision additional nodes to run Cassandra. If you go to the Mesos UI you will see the additional nodes. 
    
 You can also use the Cassandra's `nodetool` to check that indeed all nodes have joined the same cluster: 
 
@@ -133,7 +134,7 @@ ubuntu@ec2-23-23-54-129:~/cassandra-mesos-2.0.5-1$
 There are several features which we are thinking about that we haven't tackled yet:
 
 1. Autoscaling  
-Wouldn't it be awesome if Cassandra would automatically sping up more instances when your application gets featured on Hacker News? If you have a need for this we'd love to talk to you and find out the specifics.
+Wouldn't it be awesome if Cassandra would automatically sping up more instances when your application gets featured on Hacker News? Preventing ddosing yourself is a real threat with autoscaling, so a careful design is required for this feature. If you have a need for this we'd love to talk to you.
 
 1. Stats  
 Cassandra has a nice JMX API to retrieve runtime statistics about each node, the workload and cluster. It would be nice to surface these automatically in Mesos.
@@ -141,12 +142,10 @@ Cassandra has a nice JMX API to retrieve runtime statistics about each node, the
 1. Online Cassandra upgrades  
 The current version of the Cassandra on Mesos scheduler requires a Cassandra shutdown to upgrade the Cassandra cluster (unless one is willing to copy the data into a new upgraded Cassandra cluster manually). A future version could automate the upgrade process.
 
-
+1. Multiple Cassandra schedulers  
+Currently the system supports one Cassandra scheduler (aka `bin/cassandra-mesos`) running. If it goes down, the Cassandra nodes will continue to run for 1 week before terminating giving the admin plenty of time to restart the scheduler. However while the scheduler is down no nodes will be restarted in case of a failure. A multi master approach would avoid this situation. 
 
 # Conclusion
-We have shown you how easy it is to run a distributed Cassandra cluster on Mesos. Mesos takes care of most of the annoying steps involved and largely elimiates the need for complicated deployment tools. It makes sacaing 
+We have shown you how easy it is to run a distributed Cassandra cluster on Mesos. Mesos takes care of most of the annoying steps involved and largely elimiates the need for complicated deployment tools. 
 
 If you have any feedback or would like to contribute patches feel free to email <erich@mesosphere.io>. 
-
-
-
