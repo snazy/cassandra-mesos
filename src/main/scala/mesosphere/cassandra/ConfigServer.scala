@@ -40,7 +40,7 @@ class ConfigServer(port: Int, cassConfigDir: String,clusterNameSlugged :String) 
           line.replaceAllLiterally("${seedNodes}", seedNodes
             .mkString(","))
             .replaceAllLiterally("${clusterName}", clusterNameSlugged
-            .mkString(","))
+            )
       }.mkString("\n")
 
       response.setContentType("application/octet-stream;charset=utf-8")
