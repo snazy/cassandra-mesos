@@ -5,11 +5,12 @@ import java.io.FileReader
 import java.util
 import scala.collection.JavaConverters._
 import org.apache.commons.cli.MissingArgumentException
-import java.net.{URI, InetAddress}
+import java.net.InetAddress
 import org.apache.log4j.{Level, BasicConfigurator}
 import mesosphere.utils.{StateStore, Slug}
 import org.apache.mesos.state.ZooKeeperState
 import java.util.concurrent.TimeUnit
+import org.rogach.scallop._
 
 /**
  * Mesos on Cassandra
@@ -57,7 +58,7 @@ object Main extends App with Logger {
   BasicConfigurator.configure()
   getRootLogger.setLevel(Level.INFO)
 
-  info("Starting Cassandra on Mesos.")
+  val conf = new Conf(args)
 
   // Get the cluster name out of the cassandra.yaml
   val clusterName = cassConf.get("cluster_name").get.toString
@@ -69,6 +70,7 @@ object Main extends App with Logger {
   )
 
   val store = new StateStore(state)
+  val killRegex = conf.kill.get
 
   // Instanciate framework and scheduler
   val scheduler = new CassandraScheduler(masterUrl,
@@ -79,11 +81,36 @@ object Main extends App with Logger {
     numberOfHwNodes,
     clusterName)(store)
 
+  scheduler.suspendScheduling = killRegex.isDefined
+
   val schedThred = new Thread(scheduler)
   schedThred.start()
   scheduler.waitUnitInit
 
-  info("Cassandra nodes starting on: " + scheduler.fetchNodeSet().mkString(","))
+  // find out if we kill tasks or start up normally
+  killRegex match {
+    case Some(regex) =>
+      // Kill existing Cassandra tasks
+      info("Killing Cassandra tasks")
+      val tasks = scheduler.kill(regex)
+      schedThred.interrupt()
+      scheduler.stop()
+      info(s"Killed tasks: ${tasks}")
 
+    case _ =>
+      // Just start Cassandra.
+
+      info("Starting Cassandra on Mesos.")
+
+      info("Cassandra nodes starting on: " + scheduler.fetchNodeSet().mkString(","))
+
+  }
 }
 
+class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
+  banner( """Usage: cassandra-mesos [OPTION]...
+            |Run Cassandra on Mesos.
+            |Options:
+            | """.stripMargin)
+  val kill = opt[String](descr = """Kills tasks by regex matching hostnames or task IDs. Kill all tasks by using '.*'. Make sure to enclose it in single quotes.""")
+}

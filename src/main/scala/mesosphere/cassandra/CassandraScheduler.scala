@@ -7,7 +7,7 @@ import org.apache.mesos.{Protos, MesosSchedulerDriver, SchedulerDriver, Schedule
 import scala.collection.JavaConverters._
 import java.util.concurrent.CountDownLatch
 import scala.concurrent.duration._
-import mesosphere.utils.{Slug, TaskIDUtil, StateStore}
+import mesosphere.utils.{Slug, StateStore}
 import scala.collection.mutable._
 
 /**
@@ -29,12 +29,20 @@ class CassandraScheduler(masterUrl: String,
                         (implicit val store: StateStore)
   extends Scheduler with Runnable with Logger {
 
+  var suspendScheduling = false
+
   // Start serving the Cassandra config
   val configServer = new ConfigServer(confServerPort, "conf", Slug(clusterName))
 
   val FRMWIDKEY = "frameworkId"
 
+  var driver : MesosSchedulerDriver = _
+
   var initialized = new CountDownLatch(1)
+
+  def stop() ={
+    configServer.stop()
+  }
 
   def error(driver: SchedulerDriver, message: String) {
     //TODO erich implement
@@ -76,8 +84,8 @@ class CassandraScheduler(masterUrl: String,
       info(s"Task ${status.getTaskId} is being staged.")
 
     } else {
-       //TODO erich Do I need anything else here?
-     }
+      //TODO erich Do I need anything else here?
+    }
   }
 
   def offerRescinded(driver: SchedulerDriver, offerId: OfferID) {}
@@ -87,11 +95,11 @@ class CassandraScheduler(masterUrl: String,
     initialized.await()
   }
 
-  def fetchNodeSet() : Set[TaskInfoContainer] = {
+  def fetchNodeSet(): Set[TaskInfoContainer] = {
     store.fetch[Set[TaskInfoContainer]]("nodeSet").getOrElse(Set[TaskInfoContainer]())
   }
 
-  def saveNodeSet(nodeSet: Set[TaskInfoContainer]) : Set[TaskInfoContainer]= {
+  def saveNodeSet(nodeSet: Set[TaskInfoContainer]): Set[TaskInfoContainer] = {
     store.store("nodeSet", nodeSet)
     nodeSet
   }
@@ -102,7 +110,7 @@ class CassandraScheduler(masterUrl: String,
     }.size > 0
   }
 
-  def removeNode(hostname: String) : Set[TaskInfoContainer] = {
+  def removeNode(hostname: String): Set[TaskInfoContainer] = {
     val updated = fetchNodeSet().filter {
       _.hostname != hostname
     }
@@ -110,7 +118,7 @@ class CassandraScheduler(masterUrl: String,
     updated
   }
 
-  def removeNode(taskId: TaskID) : Set[TaskInfoContainer]= {
+  def removeNode(taskId: TaskID): Set[TaskInfoContainer] = {
     val updated = fetchNodeSet().filter {
       _.taskId != taskId.getValue
     };
@@ -126,72 +134,84 @@ class CassandraScheduler(masterUrl: String,
 
   def resourceOffers(driver: SchedulerDriver, offers: util.List[Offer]) {
 
-    val offeredHosts = offers.asScala.map{_.getHostname}
-    info(s"Got new resource offers ${offeredHosts}")
-    // Pull back in previous nodes so we can prefer them and reuse the data files on disk
-    var nodes = fetchNodeSet()
+    if (!suspendScheduling) {
 
-    // Construct command to run
-    val cmd = CommandInfo.newBuilder
-      .addUris(CommandInfo.URI.newBuilder.setValue(execUri))
-      .setValue(s"cd cassandra-mesos* && cd conf && rm cassandra.yaml && wget http://${confServerHostName}:${confServerPort}/cassandra.yaml && cd .. && bin/cassandra -f")
-
-    // Create all my resources
-    val res = resources.map {
-      case (k, v) => ScalarResource(k, v).toProto
-    }
-
-    var acceptedNewHosts = List[(Protos.TaskInfo, Protos.Offer)]()
-    // Let's make sure we don't start multiple Cassandras from the same cluster on the same box.
-    // We can't hand out the same port multiple times.
-    for (offer <- offers.asScala.sortBy(
-      // Prefer existing Cassandra servers over new ones so we can reuse the data on disk
-      // if the node doesn't meet the set criteria e.g. lack of diskspace, cpu, ... it will get kicked out later
-      o => !isHostRunning(o.getHostname)
-    )) {
-
-      if (isOfferGood(offer, nodes) && !haveEnoughNodes(nodes.size)) {
-        // Accepting offer
-        debug(s"offer $offer")
-
-        info("Accepted offer: " + offer.getHostname)
-
-        val id = "task" + System.currentTimeMillis()
-
-        val task = TaskInfo.newBuilder
-          .setCommand(cmd)
-          .setName(id)
-          .setTaskId(TaskID.newBuilder.setValue(id))
-          .addAllResources(res.asJava)
-          .setSlaveId(offer.getSlaveId)
-          .build
-
-        acceptedNewHosts = acceptedNewHosts :+ (task, offer)
-
-      } else {
-        // Declining offer
-        driver.declineOffer(offer.getId)
+      val offeredHosts = offers.asScala.map {
+        _.getHostname
       }
+      info(s"Got new resource offers ${offeredHosts}")
+      // Pull back in previous nodes so we can prefer them and reuse the data files on disk
+      var nodes = fetchNodeSet()
+
+      // Construct command to run
+      val cmd = CommandInfo.newBuilder
+        .addUris(CommandInfo.URI.newBuilder.setValue(execUri))
+        .setValue(s"cd cassandra-mesos* && cd conf && rm cassandra.yaml && wget http://${confServerHostName}:${confServerPort}/cassandra.yaml && cd .. && bin/cassandra -f")
+
+      // Create all my resources
+      val res = resources.map {
+        case (k, v) => ScalarResource(k, v).toProto
+      }
+
+      var acceptedNewHosts = List[(Protos.TaskInfo, Protos.Offer)]()
+      // Let's make sure we don't start multiple Cassandras from the same cluster on the same box.
+      // We can't hand out the same port multiple times.
+      for (offer <- offers.asScala.sortBy(
+        // Prefer existing Cassandra servers over new ones so we can reuse the data on disk
+        // if the node doesn't meet the set criteria e.g. lack of diskspace, cpu, ... it will get kicked out later
+        o => !isHostRunning(o.getHostname)
+      )) {
+
+        if (isOfferGood(offer, nodes) && !haveEnoughNodes(nodes.size)) {
+          // Accepting offer
+          debug(s"offer $offer")
+
+          info("Accepted offer: " + offer.getHostname)
+
+          val id = "task" + System.currentTimeMillis()
+
+          val task = TaskInfo.newBuilder
+            .setCommand(cmd)
+            .setName(id)
+            .setTaskId(TaskID.newBuilder.setValue(id))
+            .addAllResources(res.asJava)
+            .setSlaveId(offer.getSlaveId)
+            .build
+
+          acceptedNewHosts = acceptedNewHosts :+(task, offer)
+
+        } else {
+          // Declining offer
+          driver.declineOffer(offer.getId)
+        }
+      }
+
+      // add the new nodes to the total set
+      val updatedFullNodeSet = nodes ++ acceptedNewHosts.map {
+        i => TaskInfoContainer(i._1.getTaskId.getValue, i._2.getHostname)
+      }
+
+      // setup config for new machines
+      configServer.seedNodes = updatedFullNodeSet.map {
+        _.hostname
+      }
+
+      // launch tasks on the new machines
+      acceptedNewHosts.foreach {
+        newTasks =>
+          driver.launchTasks(newTasks._2.getId, List(newTasks._1).asJava)
+      }
+
+      // save it all back once we are done
+      saveNodeSet(updatedFullNodeSet)
+
+      // If we have enough nodes we are good to go
+      if (nodes.size == numberOfHwNodes) initialized.countDown()
+
+    } else {
+      //enable right away if in suspended scheduling mode
+      initialized.countDown()
     }
-
-    // add the new nodes to the total set
-    val updatedFullNodeSet = nodes ++ acceptedNewHosts.map{i => TaskInfoContainer(i._1.getTaskId.getValue,i._2.getHostname)}
-
-    // setup config for new machines
-    configServer.seedNodes = updatedFullNodeSet.map{_.hostname}
-
-    // launch tasks on the new machines
-     acceptedNewHosts.foreach{
-      newTasks =>
-        driver.launchTasks(newTasks._2.getId, List(newTasks._1).asJava)
-    }
-
-    // save it all back once we are done
-    saveNodeSet(updatedFullNodeSet)
-
-    // If we have enough nodes we are good to go
-    if (nodes.size == numberOfHwNodes) initialized.countDown()
-
   }
 
 
@@ -245,7 +265,12 @@ class CassandraScheduler(masterUrl: String,
     store.store(FRMWIDKEY, frameworkId.toByteArray)
   }
 
-  def run() {
+  def run() = {
+    init().run().getValueDescriptor.getFullName
+  }
+
+  // init driver
+  def init(): MesosSchedulerDriver = {
     info("Starting up...")
 
     val frameworkInfo = FrameworkInfo.newBuilder()
@@ -263,8 +288,8 @@ class CassandraScheduler(masterUrl: String,
         info("Starting Cassandra cluster ${clusterName} for the first time. Allocating new ID for it.")
     }
 
-    val driver = new MesosSchedulerDriver(this, frameworkInfo.build(), masterUrl)
-    driver.run().getValueDescriptor.getFullName
+    driver = new MesosSchedulerDriver(this, frameworkInfo.build(), masterUrl)
+    driver
   }
 
   //TODO not used yet - we only do Scalar resources as of yet
@@ -277,4 +302,23 @@ class CassandraScheduler(masterUrl: String,
       .build
   }
 
+  // Kills by hostname or taskId
+  def kill(hostOrTaskRegex: String = ".*"): Set[TaskInfoContainer] = {
+    val nodes = fetchNodeSet()
+
+    // kill matching tasks by hostname or taskId
+    val killed = nodes.filter {
+      n =>
+        n.hostname.matches(hostOrTaskRegex) || n.taskId.matches(hostOrTaskRegex)
+    }.map {
+      n =>
+        val status = driver.killTask(TaskID.newBuilder().setValue(n.taskId).build())
+        n
+    }
+
+    // remove them from config
+    saveNodeSet(fetchNodeSet() diff killed)
+
+    killed
+  }
 }
