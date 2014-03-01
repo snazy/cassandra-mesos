@@ -3,11 +3,11 @@ package mesosphere.cassandra
 import java.util
 import mesosphere.mesos.util.ScalarResource
 import org.apache.mesos.Protos._
-import org.apache.mesos.{MesosSchedulerDriver, SchedulerDriver, Scheduler}
+import org.apache.mesos.{Protos, MesosSchedulerDriver, SchedulerDriver, Scheduler}
 import scala.collection.JavaConverters._
 import java.util.concurrent.CountDownLatch
 import scala.concurrent.duration._
-import mesosphere.utils.{TaskIDUtil, StateStore}
+import mesosphere.utils.{Slug, TaskIDUtil, StateStore}
 import scala.collection.mutable._
 
 /**
@@ -28,6 +28,9 @@ class CassandraScheduler(masterUrl: String,
                          clusterName: String)
                         (implicit val store: StateStore)
   extends Scheduler with Runnable with Logger {
+
+  // Start serving the Cassandra config
+  val configServer = new ConfigServer(confServerPort, "conf", Slug(clusterName))
 
   val FRMWIDKEY = "frameworkId"
 
@@ -138,6 +141,7 @@ class CassandraScheduler(masterUrl: String,
       case (k, v) => ScalarResource(k, v).toProto
     }
 
+    var acceptedNewHosts = List[(Protos.TaskInfo, Protos.Offer)]()
     // Let's make sure we don't start multiple Cassandras from the same cluster on the same box.
     // We can't hand out the same port multiple times.
     for (offer <- offers.asScala.sortBy(
@@ -162,15 +166,28 @@ class CassandraScheduler(masterUrl: String,
           .setSlaveId(offer.getSlaveId)
           .build
 
-        driver.launchTasks(offer.getId, List(task).asJava)
-        nodes += TaskInfoContainer(task.getTaskId.getValue, offer.getHostname)
-        saveNodeSet(nodes)
+        acceptedNewHosts = acceptedNewHosts :+ (task, offer)
 
       } else {
         // Declining offer
         driver.declineOffer(offer.getId)
       }
     }
+
+    // add the new nodes to the total set
+    val updatedFullNodeSet = nodes ++ acceptedNewHosts.map{i => TaskInfoContainer(i._1.getTaskId.getValue,i._2.getHostname)}
+
+    // setup config for new machines
+    configServer.seedNodes = updatedFullNodeSet.map{_.hostname}
+
+    // launch tasks on the new machines
+     acceptedNewHosts.foreach{
+      newTasks =>
+        driver.launchTasks(newTasks._2.getId, List(newTasks._1).asJava)
+    }
+
+    // save it all back once we are done
+    saveNodeSet(updatedFullNodeSet)
 
     // If we have enough nodes we are good to go
     if (nodes.size == numberOfHwNodes) initialized.countDown()

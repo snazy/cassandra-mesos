@@ -68,7 +68,6 @@ object Main extends App with Logger {
     "/cassandraMesos/" + Slug(clusterName)
   )
 
-
   val store = new StateStore(state)
 
   // Instanciate framework and scheduler
@@ -83,9 +82,6 @@ object Main extends App with Logger {
   val schedThred = new Thread(scheduler)
   schedThred.start()
   scheduler.waitUnitInit
-
-  // Start serving the Cassandra config
-  val configServer = new ConfigServer(confServerPort, "conf", scheduler.getHosts(), Slug(clusterName))
 
   info("Cassandra nodes starting on: " + scheduler.fetchNodeSet().mkString(","))
 
