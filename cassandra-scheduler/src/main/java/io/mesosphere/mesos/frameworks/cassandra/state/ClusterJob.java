@@ -16,13 +16,13 @@ package io.mesosphere.mesos.frameworks.cassandra.state;
 import com.google.common.collect.Maps;
 import io.mesosphere.mesos.frameworks.cassandra.CassandraTaskProtos;
 import org.apache.mesos.Protos;
+import org.apache.mesos.SchedulerDriver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.Marker;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
-
-import static io.mesosphere.mesos.util.ProtoUtils.protoToString;
 
 /**
  * Base class for all cluster-wide operations.
@@ -39,7 +39,6 @@ public abstract class ClusterJob<S> {
 
     private final long startedTimestamp = System.currentTimeMillis();
     private Long finishedTimestamp;
-    private long nextStatus;
 
     private volatile boolean abort;
 
@@ -90,89 +89,68 @@ public abstract class ClusterJob<S> {
         return finishedTimestamp;
     }
 
-    void gotStatusFromExecutor(Protos.ExecutorID executorId, S status) {
-        LOGGER.debug("gotRepairStatus for executor {}: {}", executorId.getValue(), protoToString(status));
-        ExecutorMetadata c = currentNode;
-        if (c != null && c.getExecutorId().equals(executorId)) {
-            boolean finished = statusIsFinished(status);
-            LOGGER.debug("gotRepairStatus for current repair target {}/{} (executor {}) - running:{}",
-                    c.getHostname(), c.getIp(), c.getExecutorId().getValue(), !finished);
-            if (finished) {
-                c.repairDone(cassandraCluster.clock.now().getMillis());
-                processedNodes.put(c.getIp(), status);
-                currentNode = null;
-            }
-        }
-    }
-
-    boolean shouldStartOnExecutor(Protos.ExecutorID executorID) {
+    protected boolean canStartOnExecutor(Protos.ExecutorID executorID) {
         if (currentNode == null) {
             if (abort || !hasRemainingNodes()) {
                 shutdown();
                 return false;
             }
 
-            if (restriction != null && !restriction.contains(executorID))
-                return false;
-
-            ExecutorMetadata candidate = remainingNodeForExecutor(executorID);
-
-            if (candidate != null) {
-                CassandraTaskProtos.CassandraNodeHealthCheckDetails hc = candidate.getLastHealthCheckDetails();
-                if (checkNodeStatus(hc)) {
-                    LOGGER.info("moving current {} target to {}/{} (executor {})", getClass().getSimpleName(),
-                            candidate.getHostname(), candidate.getIp(), candidate.getExecutorId().getValue());
-                    currentNode = candidate;
-                    scheduleNextStatus();
-
-                    return true;
-                } else
-                    LOGGER.info("skipping {}/{} for {} (executor {})",
-                            candidate.getHostname(), candidate.getIp(), getClass().getSimpleName(),
-                            candidate.getExecutorId().getValue());
-            }
+            return !(restriction != null && !restriction.contains(executorID));
         }
         return false;
+    }
+
+    protected void markNodeProcessed(ExecutorMetadata c, S status) {
+        processedNodes.put(c.getSlaveMetadata().getIp(), status);
+    }
+
+    protected void setCurrentNode(ExecutorMetadata currentNode) {
+        this.currentNode = currentNode;
+    }
+
+    public ExecutorMetadata getCurrentNode() {
+        return currentNode;
     }
 
     protected boolean checkNodeStatus(CassandraTaskProtos.CassandraNodeHealthCheckDetails hc) {
         return hc.getHealthy();
     }
 
-    public boolean shouldGetStatusFromExecutor(Protos.ExecutorID executorID) {
-        ExecutorMetadata c = currentNode;
-        if (c != null && c.getExecutorId().equals(executorID)) {
-            if (nextStatus <= System.currentTimeMillis()) {
-                scheduleNextStatus();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    protected void scheduleNextStatus() {
-        nextStatus = System.currentTimeMillis() + statusInterval();
-    }
-
-    protected abstract long statusInterval();
-
-    protected abstract boolean statusIsFinished(S status);
-
     public Map<String, S> getProcessedNodes() {
         return processedNodes;
     }
 
     public String getCurrentNodeIp() {
-        return currentNode != null ? currentNode.getIp() : null;
+        return currentNode != null ? currentNode.getSlaveMetadata().getIp() : null;
     }
 
     public List<String> getRemainingNodeIps() {
         List<String> ips = new ArrayList<>();
         for (ExecutorMetadata executorMetadata : allRemainingNodes()) {
-            String ip = executorMetadata.getIp();
+            String ip = executorMetadata.getSlaveMetadata().getIp();
             if (ip != null)
                 ips.add(ip);
         }
         return ips;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        ClusterJob that = (ClusterJob) o;
+
+        if (restriction != null ? !restriction.equals(that.restriction) : that.restriction != null) return false;
+
+        return true;
+    }
+
+    @Override
+    public int hashCode() {
+        return restriction != null ? restriction.hashCode() : 0;
+    }
+
+    public abstract boolean schedule(Marker marker, SchedulerDriver driver, Protos.Offer offer, ExecutorMetadata executorMetadata);
 }

@@ -27,10 +27,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ExecutorMetadata {
     private static final Logger LOGGER = LoggerFactory.getLogger(ExecutorMetadata.class);
 
+    private final SlaveMetadata slaveMetadata;
     private final Protos.ExecutorID executorId;
 
-    private String hostname;
-    private String ip;
     private int jmxPort;
 
     private volatile long lastHealthCheck;
@@ -44,16 +43,16 @@ public class ExecutorMetadata {
 
     private final AtomicReference<ExecutorStatus> status = new AtomicReference<>(ExecutorStatus.ROLLING_OUT);
     private Protos.TaskID executorTaskId;
+    private boolean seed;
 
-    public ExecutorMetadata(Protos.ExecutorID executorId) {
+    public ExecutorMetadata(SlaveMetadata slaveMetadata, Protos.ExecutorID executorId) {
+        this.slaveMetadata = slaveMetadata;
         this.executorId = executorId;
     }
 
     public void executorLost() {
         executorTaskId = null;
 
-        ip = null;
-        hostname = null;
         executorInfo = null;
 
         serverLost();
@@ -75,22 +74,20 @@ public class ExecutorMetadata {
         return lastRepair;
     }
 
+    public void cleanupDone(long now) {
+        lastCleanup = now;
+    }
+
+    public long getLastCleanup() {
+        return lastCleanup;
+    }
+
     public void updateHealthCheck(long now, CassandraTaskProtos.CassandraNodeHealthCheckDetails healthCheckDetails) {
         lastHealthCheck = now;
         this.lastHealthCheckDetails = healthCheckDetails;
     }
 
-    public void updateHostname(String hostname, int jmxPort) {
-        this.hostname = hostname;
-        if (this.ip == null && hostname != null)
-            try {
-                InetAddress iadr = InetAddress.getByName(hostname);
-                this.ip = iadr.getHostAddress();
-            } catch (UnknownHostException e) {
-                LOGGER.error("Failed to resolve host name '" + hostname + "' to IP.", e);
-                throw new RuntimeException("Failed to resolve host name '" + hostname + '\'', e);
-            }
-
+    public void updateJmxPort(int jmxPort) {
         this.jmxPort = fixLocalhostJmxPort(jmxPort);
     }
 
@@ -99,7 +96,7 @@ public class ExecutorMetadata {
 
         // If we are running on cluster on the localhost, we must use a dynamically assigned port.
         try {
-            if (InetAddress.getByName(ip).isLoopbackAddress())
+            if (InetAddress.getByName(slaveMetadata.getIp()).isLoopbackAddress())
                 try (ServerSocket serverSocket = new ServerSocket(0)) {
                     jmxPort = serverSocket.getLocalPort();
                 } catch (IOException e) {
@@ -116,12 +113,8 @@ public class ExecutorMetadata {
         return executorId;
     }
 
-    public String getHostname() {
-        return hostname;
-    }
-
-    public String getIp() {
-        return ip;
+    public SlaveMetadata getSlaveMetadata() {
+        return slaveMetadata;
     }
 
     public int getJmxPort() {
@@ -157,12 +150,19 @@ public class ExecutorMetadata {
         this.serverTaskId = serverTaskId;
     }
 
+    public void makeSeed() {
+        this.seed = true;
+    }
+
+    public boolean isSeed() {
+        return seed;
+    }
+
     @Override
     public String toString() {
         return "ExecutorMetadata{" +
                 "executorId=" + executorId.getValue() +
-                ", hostname='" + hostname + '\'' +
-                ", ip='" + ip + '\'' +
+                ", slave='" + slaveMetadata + '\'' +
                 ", jmxPort=" + jmxPort +
                 ", lastHealthCheck=" + lastHealthCheck +
                 '}';
@@ -186,14 +186,6 @@ public class ExecutorMetadata {
         stateChange(ExecutorStatus.LAUNCHED, ExecutorStatus.RUNNING);
     }
 
-    public void cleanupDone() {
-        lastCleanup = System.currentTimeMillis();
-    }
-
-    public long getLastCleanup() {
-        return lastCleanup;
-    }
-
     public boolean shouldTriggerLaunch() {
         ExecutorStatus s = status.get();
         switch (s) {
@@ -212,8 +204,8 @@ public class ExecutorMetadata {
     private boolean stateChange(ExecutorStatus cmp, ExecutorStatus next) {
         boolean done = status.compareAndSet(cmp, next);
         assert done :
-                "Failed to change state for node " + hostname + " on executor " + executorId.getValue() + " from " + cmp + " to " + next + " - state=" +status;
-        LOGGER.info("Executor {} on {}/{} state changed from {} to {}", executorId.getValue(), hostname, ip, cmp, next);
+                "Failed to change state for executor " + executorId.getValue() + " on " + slaveMetadata + " from " + cmp + " to " + next + " - state=" +status;
+        LOGGER.info("Executor {} on {} state changed from {} to {}", executorId.getValue(), slaveMetadata, cmp, next);
         return true;
     }
 
@@ -227,6 +219,14 @@ public class ExecutorMetadata {
 
     public ExecutorStatus getStatus() {
         return status.get();
+    }
+
+    public CassandraTaskProtos.JmxConnect getJmxConnect() {
+        return CassandraTaskProtos.JmxConnect.newBuilder()
+                .setJmxPort(jmxPort)
+                        // TODO add jmxSsl, jmxUsername, jmxPassword
+                .setIp(slaveMetadata.getIp())
+                .build();
     }
 
     public static enum ExecutorStatus {

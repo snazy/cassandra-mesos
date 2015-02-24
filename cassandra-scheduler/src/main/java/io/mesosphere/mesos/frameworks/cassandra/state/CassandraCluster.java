@@ -15,7 +15,6 @@ package io.mesosphere.mesos.frameworks.cassandra.state;
 
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import io.mesosphere.mesos.frameworks.cassandra.CassandraTaskProtos;
 import io.mesosphere.mesos.util.Clock;
 import io.mesosphere.mesos.util.SystemClock;
@@ -28,6 +27,8 @@ import java.util.*;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static com.google.common.collect.FluentIterable.from;
 import static com.google.common.collect.Lists.newArrayList;
@@ -56,7 +57,7 @@ public final class CassandraCluster {
     final Clock clock = new SystemClock();
 
     final ConcurrentMap<Protos.ExecutorID, ExecutorMetadata> executorMetadataMap = Maps.newConcurrentMap();
-    private final Set<Protos.ExecutorID> seedNodeExecutors = Sets.newConcurrentHashSet();
+    private final ConcurrentMap<Protos.SlaveID, SlaveMetadata> slaveMetadataMap = Maps.newConcurrentMap();
     private final Map<Protos.TaskID, Protos.ExecutorID> taskToExecutor = Maps.newConcurrentMap();
 
     private String name;
@@ -82,7 +83,9 @@ public final class CassandraCluster {
 
     private long bootstrapGraceTimeMillis = TimeUnit.MINUTES.toMillis(2);
 
-    private final AtomicReference<ClusterJob> currentClusterJob = new AtomicReference<>();
+    private final Lock clusterJobLock = new ReentrantLock();
+    private final Queue<ClusterJob> clusterJobQueue = new LinkedList<>();
+    private ClusterJob currentClusterJob;
 
     private final Map<String, ClusterJob> lastCompletedJobs = Maps.newConcurrentMap();
 
@@ -174,23 +177,35 @@ public final class CassandraCluster {
 
     //
 
-    public ExecutorMetadata allocateNewExecutor(String hostname) {
+    public ExecutorMetadata allocateNewExecutor(Protos.SlaveID slaveId, String hostname) {
+        SlaveMetadata slaveMetadata = slaveMetadataMap.get(slaveId);
+        if (slaveMetadata.isBlacklisted())
+            return null;
+
         for (ExecutorMetadata executorMetadata : executorMetadataMap.values())
-            if (hostname.equals(executorMetadata.getHostname()))
+            if (hostname.equals(executorMetadata.getSlaveMetadata().getHostname()))
                 return null;
+
+        slaveMetadata = new SlaveMetadata(slaveId, hostname);
+        slaveMetadataMap.put(slaveId, slaveMetadata);
 
         Protos.ExecutorID executorId = executorId(name + ".node." + hostname + ".executor");
 
-        ExecutorMetadata executorMetadata = new ExecutorMetadata(executorId);
+        ExecutorMetadata executorMetadata = new ExecutorMetadata(slaveMetadata, executorId);
         ExecutorMetadata existing = executorMetadataMap.putIfAbsent(executorId, executorMetadata);
         if (existing != null)
             assert false;
         else
-            executorMetadata.updateHostname(hostname, jmxPort);
+            executorMetadata.updateJmxPort(jmxPort);
 
-        LOGGER.debug("Allocated new executor {} on host {}/{}", executorId.getValue(), hostname, executorMetadata.getIp());
+        LOGGER.debug("Allocated new executor {} on host {}/{}", executorId.getValue(), hostname, executorMetadata.getSlaveMetadata().getIp());
 
         return executorMetadata;
+    }
+
+    public boolean replaceNode(ExecutorMetadata executorMetadata) {
+        return executorMetadata.getSlaveMetadata().blacklisted()
+                && clusterJobStart(new ReplaceNodeJob(this, executorMetadata));
     }
 
     public ExecutorMetadata metadataForExecutor(Protos.ExecutorID executorId) {
@@ -246,12 +261,12 @@ public final class CassandraCluster {
 
     //
 
-    public void makeSeed(ExecutorMetadata executorMetadata) {
-        seedNodeExecutors.add(executorMetadata.getExecutorId());
-    }
-
     public boolean hasRequiredSeedNodes() {
-        return seedNodeExecutors.size() >= seedNodeCount;
+        int cnt = 0;
+        for (ExecutorMetadata executorMetadata : executorMetadataMap.values())
+            if (executorMetadata.isSeed())
+                cnt++;
+        return cnt >= seedNodeCount;
     }
 
     public boolean hasRequiredNodes() {
@@ -296,11 +311,9 @@ public final class CassandraCluster {
 
     public Iterable<String> seedsIpList() {
         List<String> ips = new ArrayList<>();
-        for (Protos.ExecutorID seedNodeExecutor : seedNodeExecutors) {
-            ExecutorMetadata executorMetadata = executorMetadataMap.get(seedNodeExecutor);
-            if (executorMetadata.getIp() != null)
-                ips.add(executorMetadata.getIp());
-        }
+        for (ExecutorMetadata executorMetadata : executorMetadataMap.values())
+            if (executorMetadata.isSeed())
+                ips.add(executorMetadata.getSlaveMetadata().getIp());
         return ips;
     }
 
@@ -330,28 +343,60 @@ public final class CassandraCluster {
     public boolean clusterJobStart(ClusterJob clusterJob) {
         if (clusterJob == null)
             return false;
-        if (!currentClusterJob.compareAndSet(null, clusterJob))
-            return false;
-        clusterJob.started();
+        clusterJobLock.lock();
+        try {
+            if (currentClusterJob!=null) {
+                for (ClusterJob job : clusterJobQueue) {
+                    if (job.equals(clusterJob))
+                        return false;
+                }
+                clusterJobQueue.add(clusterJob);
+                return true;
+            }
+
+            currentClusterJob = clusterJob;
+            clusterJob.started();
+        } finally {
+            clusterJobLock.unlock();
+        }
         return true;
+    }
+
+    public List<ClusterJob> getQueuedJobs() {
+        clusterJobLock.lock();
+        try {
+            return new ArrayList<>(clusterJobQueue);
+        } finally {
+            clusterJobLock.unlock();
+        }
     }
 
     @SuppressWarnings("unchecked")
     public <J extends ClusterJob> J currentClusterJob() {
-        return (J) currentClusterJob.get();
+        return (J) currentClusterJob;
     }
 
     @SuppressWarnings("unchecked")
     public <J extends ClusterJob> J currentClusterJob(Class<J> type) {
-        ClusterJob current = currentClusterJob.get();
+        ClusterJob current = currentClusterJob;
         return current != null && type.isAssignableFrom(current.getClass())
                 ? (J) current : null;
     }
 
     public <J extends ClusterJob> void clusterJobFinished(J job) {
         if (job != null) {
-            currentClusterJob.compareAndSet(job, null);
-            lastCompletedJobs.put(job.getClass().getSimpleName(), job);
+            clusterJobLock.lock();
+            try {
+                if (job == currentClusterJob)
+                    currentClusterJob = null;
+
+                if (currentClusterJob == null && !clusterJobQueue.isEmpty())
+                    (currentClusterJob = clusterJobQueue.poll()).started();
+
+                lastCompletedJobs.put(job.getClass().getSimpleName(), job);
+            } finally {
+                clusterJobLock.unlock();
+            }
         }
     }
 
@@ -368,48 +413,14 @@ public final class CassandraCluster {
         return true;
     }
 
-    // cleanup
+    // repair + cleanup
 
     public boolean cleanupStart(Set<Protos.ExecutorID> restriction) {
         return clusterJobStart(new CleanupJob(this, restriction));
     }
 
-    public boolean shouldStartCleanupOnExecutor(Protos.ExecutorID executorID) {
-        CleanupJob r = currentClusterJob(CleanupJob.class);
-        return r != null && r.shouldStartOnExecutor(executorID);
-    }
-
-    public boolean shouldGetCleanupStatusOnExecutor(Protos.ExecutorID executorID) {
-        CleanupJob r = currentClusterJob(CleanupJob.class);
-        return r != null && r.shouldGetStatusFromExecutor(executorID);
-    }
-
-    public void gotCleanupStatus(Protos.ExecutorID executorId, CassandraTaskProtos.KeyspaceJobStatus keyspaceJobStatus) {
-        CleanupJob r = currentClusterJob(CleanupJob.class);
-        if (r != null)
-            r.gotStatusFromExecutor(executorId, keyspaceJobStatus);
-    }
-
-    // repair
-
     public boolean repairStart() {
-        return clusterJobStart(new RepairJob(this));
-    }
-
-    public boolean shouldStartRepairOnExecutor(Protos.ExecutorID executorID) {
-        RepairJob r = currentClusterJob(RepairJob.class);
-        return r != null && r.shouldStartOnExecutor(executorID);
-    }
-
-    public boolean shouldGetRepairStatusOnExecutor(Protos.ExecutorID executorID) {
-        RepairJob r = currentClusterJob(RepairJob.class);
-        return r != null && r.shouldGetStatusFromExecutor(executorID);
-    }
-
-    public void gotRepairStatus(Protos.ExecutorID executorId, CassandraTaskProtos.KeyspaceJobStatus keyspaceJobStatus) {
-        RepairJob r = currentClusterJob(RepairJob.class);
-        if (r != null)
-            r.gotStatusFromExecutor(executorId, keyspaceJobStatus);
+        return clusterJobStart(new RepairJob(this, null));
     }
 
     // health check

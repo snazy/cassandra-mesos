@@ -119,6 +119,13 @@ public final class ApiController {
                 json.writeStringField("type", currentJob.getClass().getSimpleName());
                 json.writeEndObject();
             }
+            json.writeArrayFieldStart("queued_jobs");
+            for (ClusterJob queuedJob : cluster.getQueuedJobs()) {
+                json.writeStartObject();
+                json.writeStringField("type", queuedJob.getClass().getSimpleName());
+                json.writeEndObject();
+            }
+            json.writeEndArray();
 
             writeSeedIps(json);
 
@@ -135,8 +142,8 @@ public final class ApiController {
                 json.writeStartObject();
 
                 json.writeStringField("executor_id", executorMetadata.getExecutorId().getValue());
-                json.writeStringField("ip", executorMetadata.getIp());
-                json.writeStringField("hostname", executorMetadata.getHostname());
+                json.writeStringField("ip", executorMetadata.getSlaveMetadata().getIp());
+                json.writeStringField("hostname", executorMetadata.getSlaveMetadata().getHostname());
                 json.writeNumberField("jmx_port", executorMetadata.getJmxPort());
                 json.writeStringField("status", executorMetadata.getStatus().name());
 

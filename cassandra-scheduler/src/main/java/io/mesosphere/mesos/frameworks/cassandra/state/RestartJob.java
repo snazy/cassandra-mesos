@@ -13,23 +13,24 @@
  */
 package io.mesosphere.mesos.frameworks.cassandra.state;
 
+import org.apache.mesos.Protos;
+import org.apache.mesos.SchedulerDriver;
+import org.slf4j.Marker;
+
+import java.util.Set;
+
 /**
  * Rolling restart.
  */
-public class RestartJob extends ClusterJob {
-    public RestartJob(CassandraCluster cassandraCluster) {
-        super(cassandraCluster, null);
+public class RestartJob extends ClusterJob<Boolean> {
+    public RestartJob(CassandraCluster cassandraCluster, Set<Protos.ExecutorID> restriction) {
+        super(cassandraCluster, restriction);
+    }
+
+    @Override
+    public boolean schedule(Marker marker, SchedulerDriver driver, Protos.Offer offer, ExecutorMetadata executorMetadata) {
+        throw new UnsupportedOperationException("IMPLEMENT ME");
     }
 
     // TODO implement
-
-    @Override
-    protected long statusInterval() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    protected boolean statusIsFinished(Object status) {
-        throw new UnsupportedOperationException();
-    }
 }

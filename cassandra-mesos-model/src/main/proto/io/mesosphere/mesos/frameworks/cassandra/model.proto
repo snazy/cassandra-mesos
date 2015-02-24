@@ -112,8 +112,7 @@ message SlaveStatusDetails {
         RUN_DETAILS = 3;
         ERROR_DETAILS = 4;
         HEALTH_CHECK_DETAILS = 5;
-        REPAIR_STATUS = 6;
-        CLEANUP_STATUS = 7;
+        KEYSPACE_JOB_STATUS = 6;
     }
 }
 

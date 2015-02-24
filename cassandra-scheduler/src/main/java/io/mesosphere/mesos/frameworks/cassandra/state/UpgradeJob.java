@@ -13,12 +13,16 @@
  */
 package io.mesosphere.mesos.frameworks.cassandra.state;
 
+import org.apache.mesos.Protos;
+
+import java.util.Set;
+
 /**
  * Upgrade C* software.
  */
 public class UpgradeJob extends RestartJob {
-    public UpgradeJob(CassandraCluster cassandraCluster) {
-        super(cassandraCluster);
+    public UpgradeJob(CassandraCluster cassandraCluster, Set<Protos.ExecutorID> restriction) {
+        super(cassandraCluster, restriction);
     }
 
     // TODO implement

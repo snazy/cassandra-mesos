@@ -18,26 +18,17 @@ import org.apache.mesos.Protos;
 
 import java.util.Set;
 
-public final class CleanupJob extends ClusterJob<CassandraTaskProtos.KeyspaceJobStatus> {
+public final class CleanupJob extends ClusterKeyspaceJob {
 
     private static final long CLEANUP_STATUS_INVERVAL = 10000L;
+    private static final String CLEANUP_SUFFIX = ".cleanup";
 
     CleanupJob(CassandraCluster cassandraCluster, Set<Protos.ExecutorID> restriction) {
-        super(cassandraCluster, restriction);
+        super(cassandraCluster, restriction, CLEANUP_STATUS_INVERVAL, CassandraTaskProtos.KeyspaceJobType.CLEANUP, CLEANUP_SUFFIX);
     }
 
     @Override
-    protected long statusInterval() {
-        return CLEANUP_STATUS_INVERVAL;
-    }
-
-    @Override
-    protected boolean statusIsFinished(CassandraTaskProtos.KeyspaceJobStatus status) {
-        return !status.getRunning();
-    }
-
-    @Override
-    protected boolean checkNodeStatus(CassandraTaskProtos.CassandraNodeHealthCheckDetails hc) {
-        return super.checkNodeStatus(hc) && "NORMAL".equals(hc.getInfo().getOperationMode());
+    protected void nodeFinished(ExecutorMetadata c) {
+        c.cleanupDone(cassandraCluster.clock.now().getMillis());
     }
 }
